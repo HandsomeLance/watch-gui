@@ -6,8 +6,8 @@ class PPGPlotWidget(QWidget):
     def __init__(self):
         super().__init__()
         # 添加字体配置，支持中文显示
-        plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC"]  # 备选字体列表，适配不同系统
-        plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题（可选）
+        plt.rcParams["font.family"] = ["SimHei"]  # 字体列表
+        plt.rcParams["axes.unicode_minus"] = False
         layout = QVBoxLayout(self)
         self.fig, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.fig)
