@@ -9,6 +9,9 @@ from signal_processing.normal import normalize_signal
 READ_CHAR_UUID = "000034F2-0000-1000-8000-00805F9B34FB"
 
 class WatchWorker(QThread):
+    CONNECTION_TIMEOUT = 40  # seconds
+    SCAN_SLEEP_INTERVAL = 1  # seconds
+
     ppg_signal = pyqtSignal(list)
     accel_signal = pyqtSignal(list)
     status_signal = pyqtSignal(str)
@@ -19,6 +22,8 @@ class WatchWorker(QThread):
         self.device_name = device_name
         self.fs = fs
         self.running = True
+        self.loop = None
+        self.client = None
         self.loop = None
         self.client = None
 
@@ -122,22 +127,35 @@ class WatchWorker(QThread):
     # -------------------- 蓝牙连接 --------------------
     async def connect_and_listen(self):
         self.status_signal.emit("正在连接设备...")
+
+        # 如果已经连接，直接使用
         if self.client and self.client.is_connected:
             target = self.client
         else:
-            devices = await BleakScanner.discover(timeout=5)
             target = None
-            for d in devices:
-                if d.name == self.device_name:
-                    self.client = BleakClient(d)
-                    await self.client.connect()
-                    if self.client.is_connected:
-                        target = self.client
-                        self.status_signal.emit("扫描连接成功")
-                        break
-        if not target:
-            self.status_signal.emit("无法连接手表")
-            return
+            start_time = asyncio.get_running_loop().time()  # 记录开始时间
+            while True:
+                elapsed = asyncio.get_running_loop().time() - start_time
+                if elapsed > self.CONNECTION_TIMEOUT:  # 超过 CONNECTION_TIMEOUT 秒仍未连接
+                    self.status_signal.emit("无法连接手表")
+                    return
+                devices = await BleakScanner.discover(timeout=self.SCAN_TIMEOUT)
+                # 扫描设备，timeout=3s
+                devices = await BleakScanner.discover(timeout=3)
+                for d in devices:
+                    if d.name == self.device_name:
+                        try:
+                            self.client = BleakClient(d)
+                            await self.client.connect()
+                            if self.client.is_connected:
+                                target = self.client
+                                self.status_signal.emit("扫描连接成功")
+                                break
+                        except Exception as e:
+                            self.status_signal.emit(f"尝试连接异常: {e}")
+                if target:
+                    break  # 找到目标设备并成功连接后跳出循环
+                await asyncio.sleep(self.SCAN_SLEEP_INTERVAL)  # 每轮扫描间隔 SCAN_SLEEP_INTERVAL 秒
 
         await target.start_notify(READ_CHAR_UUID, self.notification_handler)
         self.status_signal.emit("开始接收数据")
