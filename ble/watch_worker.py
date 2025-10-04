@@ -28,8 +28,8 @@ class WatchWorker(QThread):
         self.loop = None
         self.client = None
 
-        # 环形缓冲区 10秒
-        self.buffer_len = 10 * self.fs
+        # 环形缓冲区 20秒
+        self.buffer_len = 20 * self.fs
         self.ppg_buffer = np.zeros(self.buffer_len, dtype=np.float32)
         self.accel_buffer = np.zeros((self.buffer_len, 3), dtype=np.float32)
         self.ppg_index = 0
@@ -43,6 +43,13 @@ class WatchWorker(QThread):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_gui)
         self.timer.start(self.gui_update_interval)
+
+        # 心率更新
+        self.hr_update_interval = 5000  # 毫秒，5秒
+        self.hr_timer = QTimer()
+        self.hr_timer.timeout.connect(self.update_hr)
+        self.hr_timer.start(self.hr_update_interval)
+        self.latest_bpm = None  # 缓存心率
 
         self.latest_ppg = np.array([], dtype=np.float32)
 
@@ -81,7 +88,7 @@ class WatchWorker(QThread):
             peaks = self.rri_proc.detect_peaks(self.get_ppg_buffer())
             _, bpm = self.rri_proc.compute_rri(peaks)
             if bpm is not None:
-                self.hr_signal.emit(bpm)
+                self.latest_bpm = bpm
 
         elif decoded['type'] == 'accel':
             self.add_accel(decoded['data'])
@@ -124,6 +131,11 @@ class WatchWorker(QThread):
             return
         self.latest_ppg = normalize_signal(self.get_ppg_buffer())
         self.ppg_signal.emit(list(self.latest_ppg))
+
+    # -------------------- 心率更新 --------------------
+    def update_hr(self):
+        if self.latest_bpm is not None:
+            self.hr_signal.emit(self.latest_bpm)
 
     # -------------------- 蓝牙连接 --------------------
     async def connect_and_listen(self):
