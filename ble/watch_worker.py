@@ -11,6 +11,7 @@ READ_CHAR_UUID = "000034F2-0000-1000-8000-00805F9B34FB"
 class WatchWorker(QThread):
     CONNECTION_TIMEOUT = 40  # seconds
     SCAN_SLEEP_INTERVAL = 1  # seconds
+    SCAN_TIMEOUT = 3  # seconds
 
     ppg_signal = pyqtSignal(list)
     accel_signal = pyqtSignal(list)
@@ -139,9 +140,8 @@ class WatchWorker(QThread):
                 if elapsed > self.CONNECTION_TIMEOUT:  # 超过 CONNECTION_TIMEOUT 秒仍未连接
                     self.status_signal.emit("无法连接手表")
                     return
-                devices = await BleakScanner.discover(timeout=self.SCAN_TIMEOUT)
                 # 扫描设备，timeout=3s
-                devices = await BleakScanner.discover(timeout=3)
+                devices = await BleakScanner.discover(timeout=self.SCAN_TIMEOUT)
                 for d in devices:
                     if d.name == self.device_name:
                         try:
