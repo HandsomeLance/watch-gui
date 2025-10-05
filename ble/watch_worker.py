@@ -95,24 +95,52 @@ class WatchWorker(QThread):
             self.accel_signal.emit(decoded['data'])
 
     def decode_data(self, data):
-        if len(data) < 8:
-            return None
+        # 1. 按指令类型判断最小长度（符合文档结构推算）
         command = data[0:2]
+        min_len = 0
         if command == b'\xff\xfa':
-            ppg_bytes = data[7:-1]
-            points = [int.from_bytes(ppg_bytes[i:i+2], 'little') 
-                      for i in range(0, len(ppg_bytes), 2) if i+1 < len(ppg_bytes)]
-            return {'type': 'ppg', 'data': points}
+            min_len = 10  # PPG最小包长度：2+4+1+2+1=10
         elif command == b'\xff\xfb':
-            accel_bytes = data[7:-1]
+            min_len = 14  # 三轴最小包长度：2+4+1+6+1=14
+        else:
+            return None  # 指令头非法
+        
+        if len(data) < min_len:
+            return None  # 长度不足，直接返回无效
+
+        # 2. 提取公共字段（时间戳、数据长度、CRC，符合文档）
+        timestamp = int.from_bytes(data[2:6], 'little')  # 三轴指令补全时间戳提取
+        length = data[6]
+        crc = data[7 + length]  # 提取CRC位（业务数据后1字节）
+        
+        # 3. CRC校验（严格按文档“异或规则”）
+        calc_crc = 0
+        for byte in data[0 : 7 + length]:  # 校验位前所有字节
+            calc_crc ^= byte
+        if calc_crc != crc:
+            return None  # CRC校验失败，数据无效
+
+        # 4. 业务数据截取与合法性校验（符合文档倍数要求）
+        if command == b'\xff\xfa':  # PPG数据
+            if length % 2 != 0:
+                return None  # 文档要求PPG长度为2的倍数
+            ppg_bytes = data[7 : 7 + length]
+            points = [int.from_bytes(ppg_bytes[i:i+2], 'little') 
+                    for i in range(0, len(ppg_bytes), 2)]
+            return {'type': 'ppg', 'data': points, 'timestamp': timestamp}  # 返回时间戳供连续性判断
+        
+        elif command == b'\xff\xfb':  # 三轴数据
+            if length % 6 != 0:
+                return None  # 文档要求三轴长度为6的倍数
+            accel_bytes = data[7 : 7 + length]
             points = []
             for i in range(0, len(accel_bytes), 6):
-                if i+5 < len(accel_bytes):
-                    x = int.from_bytes(accel_bytes[i:i+2], 'little', signed=True)
-                    y = int.from_bytes(accel_bytes[i+2:i+4], 'little', signed=True)
-                    z = int.from_bytes(accel_bytes[i+4:i+6], 'little', signed=True)
-                    points.append((x, y, z))
-            return {'type': 'accel', 'data': points}
+                x = int.from_bytes(accel_bytes[i:i+2], 'little', signed=True)
+                y = int.from_bytes(accel_bytes[i+2:i+4], 'little', signed=True)
+                z = int.from_bytes(accel_bytes[i+4:i+6], 'little', signed=True)
+                points.append((x, y, z))
+            return {'type': 'accel', 'data': points, 'timestamp': timestamp}  # 补全时间戳返回
+
         return None
 
     # -------------------- 缓冲区读取 --------------------

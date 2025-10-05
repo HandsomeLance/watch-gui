@@ -1,62 +1,86 @@
 import numpy as np
-from scipy.signal import find_peaks, butter, filtfilt
+from scipy.signal import find_peaks, butter, filtfilt, savgol_filter
 
-# 滤波器函数
-def butter_bandpass(lowcut, highcut, fs, order=5):
-    nyq = 0.5 * fs
-    if highcut >= nyq:
-        highcut = nyq - 1e-5
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(order, [low, high], btype='band')
-    return b, a
-
-def butter_lowpass(highcut, fs, order=5):
-    nyq = 0.5 * fs
-    if highcut >= nyq:
-        highcut = nyq - 1e-5
-    high = highcut / nyq
-    b, a = butter(order, high, btype='low')
-    return b, a
-
-def bandpass_filter(data, lowcut, highcut, fs, order=5):
-    if lowcut == 0:
-        b, a = butter_lowpass(highcut, fs, order=order)
-    else:
-        b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-    y = filtfilt(b, a, data)
-    return y
-
-# RRI Processor
 class RRIProcessor:
-    def __init__(self, fs=100, min_peak_distance_sec=0.5):
+    """
+    改进版 RRI 处理器：
+    - 允许心率范围 45-185 BPM
+    - 自动滤波、平滑
+    - 过滤舒张峰误检
+    """
+
+    def __init__(self, fs=100, hr_min=45, hr_max=185):
         self.fs = fs
-        self.min_distance = int(min_peak_distance_sec * fs)
+        self.hr_min = hr_min
+        self.hr_max = hr_max
+        # 最小峰间距（采样点）
+        self.min_distance = int(fs * 60 / hr_max)
+        # 最大峰间距，用于异常值过滤（ms）
+        self.max_rri_ms = 60_000 / hr_min
         self.last_peaks = []
 
+    # ------------------ 滤波器 ------------------
+    def bandpass_filter(self, data, lowcut=0.9, highcut=3.2, order=4):
+        nyq = 0.5 * self.fs
+        if highcut >= nyq:
+            highcut = nyq - 1e-5
+        b, a = butter(order, [lowcut/nyq, highcut/nyq], btype='band')
+        return filtfilt(b, a, data)
+
+    # ------------------ 峰检测 ------------------
     def detect_peaks(self, ppg_signal):
         """
-        先对 PPG 信号进行 0-3Hz 带通滤波，再检测波峰
-        返回波峰索引列表
+        检测 PPG 收缩峰，返回索引列表
         """
         if len(ppg_signal) < self.min_distance:
             return []
 
-        # 0-3 Hz 带通滤波
-        filtered = bandpass_filter(ppg_signal, lowcut=0.0, highcut=3.0, fs=self.fs, order=4)
+        # 带通滤波
+        filtered = self.bandpass_filter(ppg_signal)
 
-        # 峰值检测
-        peaks, _ = find_peaks(filtered, distance=self.min_distance)
+        # Savitzky-Golay 平滑
+        filtered = savgol_filter(filtered, window_length=7, polyorder=3)
 
-        self.last_peaks = peaks
-        return peaks
+        # 自适应峰高阈值
+        peak_height = np.median(filtered) + 0.5 * np.std(filtered)
 
+        # 初步检测峰
+        peaks, properties = find_peaks(
+            filtered,
+            distance=self.min_distance,
+            height=peak_height
+        )
+
+        # 删除峰间隔过小的低峰（保留更高峰）
+        clean_peaks = []
+        for p in peaks:
+            if not clean_peaks:
+                clean_peaks.append(p)
+                continue
+            if p - clean_peaks[-1] < self.min_distance:
+                # 保留高度更高的峰
+                if filtered[p] > filtered[clean_peaks[-1]]:
+                    clean_peaks[-1] = p
+            else:
+                clean_peaks.append(p)
+
+        self.last_peaks = np.array(clean_peaks)
+        return self.last_peaks
+
+    # ------------------ 计算 RRI 和 BPM ------------------
     def compute_rri(self, peaks):
         """
-        计算RRI(ms) 和心率(BPM)
+        输入峰索引，返回：
+        - rr_intervals : ms
+        - bpm : 平均心率
         """
         if len(peaks) < 2:
-            return [], None
+            return np.array([]), None
+
         rr_intervals = np.diff(peaks) / self.fs * 1000.0  # ms
-        bpm = 60.0 / (np.mean(rr_intervals) / 1000.0)     # BPM
+
+        # 去除不合理 RRI
+        rr_intervals = np.clip(rr_intervals, 60_000/self.hr_max, 60_000/self.hr_min)
+
+        bpm = 60_000 / np.mean(rr_intervals)  # BPM
         return rr_intervals, bpm
