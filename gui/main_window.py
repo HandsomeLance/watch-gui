@@ -8,6 +8,8 @@ class MainWindow(QMainWindow):
     def __init__(self, worker):
         super().__init__()
         self.setWindowTitle("手表实时PPG监测")
+        # 窗口大小设置
+        self.resize(400, 300)
 
         # 中央堆叠布局（连接界面 + 菜单界面）
         self.central = QWidget()
