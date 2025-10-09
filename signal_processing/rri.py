@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import find_peaks, butter, filtfilt, savgol_filter
+from scipy.signal import find_peaks, butter, filtfilt
 
 class RRIProcessor:
     """
@@ -35,18 +35,12 @@ class RRIProcessor:
         if len(ppg_signal) < self.min_distance:
             return []
 
-        # 带通滤波
-        filtered = self.bandpass_filter(ppg_signal)
-
-        # Savitzky-Golay 平滑
-        filtered = savgol_filter(filtered, window_length=7, polyorder=3)
-
         # 自适应峰高阈值
-        peak_height = np.median(filtered) + 0.5 * np.std(filtered)
+        peak_height = np.median(ppg_signal) + 0.5 * np.std(ppg_signal)
 
         # 初步检测峰
         peaks, properties = find_peaks(
-            filtered,
+            ppg_signal,
             distance=self.min_distance,
             height=peak_height
         )
@@ -59,7 +53,7 @@ class RRIProcessor:
                 continue
             if p - clean_peaks[-1] < self.min_distance:
                 # 保留高度更高的峰
-                if filtered[p] > filtered[clean_peaks[-1]]:
+                if ppg_signal[p] > ppg_signal[clean_peaks[-1]]:
                     clean_peaks[-1] = p
             else:
                 clean_peaks.append(p)
